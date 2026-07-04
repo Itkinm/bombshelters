@@ -53,10 +53,17 @@ def geocode(query):
     return float(data[0]["lat"]), float(data[0]["lon"])
 
 
-def _extract_city_region(address):
-    """Pull (city, region) from a Nominatim address-details dict."""
+# Nominatim address fields that may carry a Russian район / district name.
+_DISTRICT_FIELDS = (
+    "city_district", "suburb", "borough", "quarter",
+    "neighbourhood", "municipality", "district", "town",
+)
+
+
+def _extract_place(address):
+    """Pull (city, region, district_candidates) from a Nominatim address dict."""
     if not address:
-        return None, None
+        return None, None, []
     city = (
         address.get("city")
         or address.get("town")
@@ -65,13 +72,19 @@ def _extract_city_region(address):
         or address.get("hamlet")
     )
     region = address.get("state") or address.get("region")
-    return city, region
+
+    districts = []
+    for field in _DISTRICT_FIELDS:
+        val = address.get(field)
+        if val and val not in districts:
+            districts.append(val)
+    return city, region, districts
 
 
 def geocode_details(query):
-    """Geocode an address and also return its city/region.
+    """Geocode an address and also return its city/region/district candidates.
 
-    Returns (lat, lon, city, region) or None. One Nominatim call.
+    Returns (lat, lon, city, region, district_candidates) or None. One call.
     """
     if not query or not query.strip():
         return None
@@ -96,12 +109,15 @@ def geocode_details(query):
     if not data:
         return None
     item = data[0]
-    city, region = _extract_city_region(item.get("address"))
-    return float(item["lat"]), float(item["lon"]), city, region
+    city, region, districts = _extract_place(item.get("address"))
+    return float(item["lat"]), float(item["lon"]), city, region, districts
 
 
 def reverse_geocode(lat, lon):
-    """Reverse-geocode coordinates to (city, region). Returns (None, None) on failure."""
+    """Reverse-geocode to (city, region, district_candidates).
+
+    Returns (None, None, []) on failure.
+    """
     try:
         resp = requests.get(
             NOMINATIM_REVERSE_URL,
@@ -118,8 +134,8 @@ def reverse_geocode(lat, lon):
         resp.raise_for_status()
         data = resp.json()
     except Exception:
-        return None, None
-    return _extract_city_region(data.get("address"))
+        return None, None, []
+    return _extract_place(data.get("address"))
 
 
 def haversine(lat1, lon1, lat2, lon2):

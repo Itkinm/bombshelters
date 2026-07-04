@@ -9,7 +9,12 @@ from shelter_finder import (
     geocode_details,
     reverse_geocode,
 )
-from civil_defense import lookup_civil_defense, format_body
+from civil_defense import (
+    lookup_civil_defense,
+    format_body,
+    find_district_body,
+    format_district_body,
+)
 
 load_dotenv()
 
@@ -31,12 +36,15 @@ def send_result(chat_id, result):
     bot.send_location(chat_id, result['lat'], result['lon'])
 
 
-def send_civil_defense(chat_id, city, region):
-    """Find and send the responsible civil-defense body for a location."""
+def send_civil_defense(chat_id, city, region, district_candidates=None):
+    """Send the responsible civil-defense body (region/city, plus district for Moscow/SPB)."""
     result = lookup_civil_defense(city, region)
-    if result is None:
-        return
-    bot.send_message(chat_id, format_body(result))
+    if result is not None:
+        bot.send_message(chat_id, format_body(result))
+
+    district_row = find_district_body(city, district_candidates)
+    if district_row is not None:
+        bot.send_message(chat_id, format_district_body(district_row))
 
 
 @bot.message_handler(commands=['start'])
@@ -55,8 +63,8 @@ def handle_location(message):
     else:
         send_result(message.chat.id, result)
 
-    city, region = reverse_geocode(lat, lon)
-    send_civil_defense(message.chat.id, city, region)
+    city, region, districts = reverse_geocode(lat, lon)
+    send_civil_defense(message.chat.id, city, region, districts)
 
 
 @bot.message_handler(content_types=['text'])
@@ -67,7 +75,7 @@ def handle_address(message):
         bot.send_message(message.chat.id, "Извините, не удалось распознать этот адрес. Попробуйте уточнить адрес или отправьте геолокацию.")
         return
 
-    lat, lon, city, region = details
+    lat, lon, city, region, districts = details
 
     result = find_closest_shelter_by_coords(lat, lon)
     if result is None:
@@ -75,7 +83,7 @@ def handle_address(message):
     else:
         send_result(message.chat.id, result)
 
-    send_civil_defense(message.chat.id, city, region)
+    send_civil_defense(message.chat.id, city, region, districts)
 
 
 

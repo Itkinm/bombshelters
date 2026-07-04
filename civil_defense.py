@@ -10,10 +10,21 @@ fall back to the body for the user's region.
 
 import csv
 import os
+import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CITIES_CSV = os.path.join(BASE_DIR, "cities_civil_defense.csv")
 REGIONS_CSV = os.path.join(BASE_DIR, "regions_civil_defense.csv")
+DISTRICTS_CSV = os.path.join(BASE_DIR, "moscow_spb_districts_civil_defense.csv")
+
+# Cities that have district-level bodies in the districts table.
+DISTRICT_CITIES = {"москва", "санкт-петербург"}
+
+# Whole-word tokens dropped when normalizing a district name for matching.
+_DISTRICT_DROP = {
+    "район", "поселение", "посёлок", "поселок", "деревня", "село", "город",
+    "округ", "муниципальный", "административный", "городской", "квартал",
+}
 
 
 def _norm(s):
@@ -29,13 +40,24 @@ def _norm(s):
     return s.strip()
 
 
+def _norm_district(s):
+    """Normalize a district (район) name into a token set for matching."""
+    if not s:
+        return set()
+    s = s.lower().replace("ё", "е")
+    tokens = re.findall(r"[а-я0-9-]+", s)
+    return {t for t in tokens if t and t not in _DISTRICT_DROP}
+
+
 def _load(path):
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
+# Loaded once at import time (i.e. on bot startup), not per request.
 _CITIES = _load(CITIES_CSV)
 _REGIONS = _load(REGIONS_CSV)
+_DISTRICTS = _load(DISTRICTS_CSV)
 
 
 def find_city(city):
@@ -79,25 +101,74 @@ def lookup_civil_defense(city=None, region=None):
     return None
 
 
+def find_district_body(city, district_candidates):
+    """Find the district-level (район) body for a Moscow/SPB user.
+
+    city: the user's city (e.g. "Москва"/"Санкт-Петербург").
+    district_candidates: iterable of possible район names from geocoding.
+    Returns a row dict or None.
+    """
+    if not city:
+        return None
+    city_n = _norm(city)
+    if city_n not in DISTRICT_CITIES:
+        return None
+
+    rows = [r for r in _DISTRICTS if _norm(r.get("city")) == city_n]
+    if not rows:
+        return None
+
+    cand_sets = [_norm_district(c) for c in (district_candidates or [])]
+    cand_sets = [c for c in cand_sets if c]
+    if not cand_sets:
+        return None
+
+    for row in rows:
+        rset = _norm_district(row.get("district"))
+        if not rset:
+            continue
+        for cand in cand_sets:
+            # All row tokens present in a candidate (exact or more specific).
+            if rset == cand or rset <= cand:
+                return row
+    return None
+
+
+def _format_contacts(lines, row):
+    for label, key in (("Адрес", "address"), ("Телефон", "phone"),
+                       ("Email", "email"), ("Сайт", "website")):
+        val = (row.get(key) or "").strip()
+        if val:
+            lines.append(f"{label}: {val}")
+
+
 def format_body(result):
-    """Format a lookup result as a Russian-language message block."""
+    """Format a city/region lookup result as a Russian-language message block."""
     if not result:
         return None
     row = result["row"]
     scope = "город" if result["level"] == "city" else "регион"
     lines = [f"Ответственный орган ГО и ЧС ({scope}):", row.get("body_name", "").strip()]
+    _format_contacts(lines, row)
+    return "\n".join(line for line in lines if line)
 
-    address = (row.get("address") or "").strip()
-    phone = (row.get("phone") or "").strip()
-    email = (row.get("email") or "").strip()
-    website = (row.get("website") or "").strip()
 
-    if address:
-        lines.append(f"Адрес: {address}")
-    if phone:
-        lines.append(f"Телефон: {phone}")
-    if email:
-        lines.append(f"Email: {email}")
-    if website:
-        lines.append(f"Сайт: {website}")
+def format_district_body(row):
+    """Format a district-level (район) body as a Russian-language message block."""
+    if not row:
+        return None
+    district = (row.get("district") or "").strip()
+    if (row.get("body_type") or "").strip() == "ukp":
+        header = "Районный учебно-консультационный пункт ГО и ЧС"
+    else:
+        header = "Районный орган ГО и ЧС"
+    if district:
+        header += f" ({district})"
+    header += ":"
+
+    name = (row.get("org_name") or "").strip() or (row.get("body_name") or "").strip()
+    lines = [header]
+    if name:
+        lines.append(name)
+    _format_contacts(lines, row)
     return "\n".join(line for line in lines if line)
