@@ -14,6 +14,7 @@ from civil_defense import (
     format_body,
     find_district_body,
     format_district_body,
+    is_district_city,
 )
 
 load_dotenv()
@@ -37,14 +38,20 @@ def send_result(chat_id, result):
 
 
 def send_civil_defense(chat_id, city, region, district_candidates=None):
-    """Send the responsible civil-defense body (region/city, plus district for Moscow/SPB)."""
+    """Send the responsible civil-defense body.
+
+    For Moscow/SPB only the district-level body is sent (no city/region info);
+    for everywhere else the region/city body is sent.
+    """
+    if is_district_city(city):
+        district_row = find_district_body(city, district_candidates)
+        if district_row is not None:
+            bot.send_message(chat_id, format_district_body(district_row))
+        return
+
     result = lookup_civil_defense(city, region)
     if result is not None:
         bot.send_message(chat_id, format_body(result))
-
-    district_row = find_district_body(city, district_candidates)
-    if district_row is not None:
-        bot.send_message(chat_id, format_district_body(district_row))
 
 
 @bot.message_handler(commands=['start'])

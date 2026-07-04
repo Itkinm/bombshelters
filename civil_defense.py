@@ -101,6 +101,11 @@ def lookup_civil_defense(city=None, region=None):
     return None
 
 
+def is_district_city(city):
+    """True if the city has district-level bodies (Moscow / SPB)."""
+    return _norm(city) in DISTRICT_CITIES
+
+
 def find_district_body(city, district_candidates):
     """Find the district-level (район) body for a Moscow/SPB user.
 
