@@ -19,6 +19,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "shelters.db")
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "bomboubezhishe-shelter-bot/1.0 (Moscow shelter finder)"
 
 ORS_API_KEY = os.environ.get("ORS_API_KEY")
@@ -50,6 +51,75 @@ def geocode(query):
     if not data:
         return None
     return float(data[0]["lat"]), float(data[0]["lon"])
+
+
+def _extract_city_region(address):
+    """Pull (city, region) from a Nominatim address-details dict."""
+    if not address:
+        return None, None
+    city = (
+        address.get("city")
+        or address.get("town")
+        or address.get("municipality")
+        or address.get("village")
+        or address.get("hamlet")
+    )
+    region = address.get("state") or address.get("region")
+    return city, region
+
+
+def geocode_details(query):
+    """Geocode an address and also return its city/region.
+
+    Returns (lat, lon, city, region) or None. One Nominatim call.
+    """
+    if not query or not query.strip():
+        return None
+    try:
+        resp = requests.get(
+            NOMINATIM_URL,
+            params={
+                "q": query,
+                "format": "json",
+                "countrycodes": "ru",
+                "limit": 1,
+                "addressdetails": 1,
+                "accept-language": "ru",
+            },
+            headers={"User-Agent": USER_AGENT},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None
+    if not data:
+        return None
+    item = data[0]
+    city, region = _extract_city_region(item.get("address"))
+    return float(item["lat"]), float(item["lon"]), city, region
+
+
+def reverse_geocode(lat, lon):
+    """Reverse-geocode coordinates to (city, region). Returns (None, None) on failure."""
+    try:
+        resp = requests.get(
+            NOMINATIM_REVERSE_URL,
+            params={
+                "lat": lat,
+                "lon": lon,
+                "format": "json",
+                "addressdetails": 1,
+                "accept-language": "ru",
+            },
+            headers={"User-Agent": USER_AGENT},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None, None
+    return _extract_city_region(data.get("address"))
 
 
 def haversine(lat1, lon1, lat2, lon2):
