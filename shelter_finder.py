@@ -8,15 +8,11 @@ supporting both foot-walking and driving-car. Falls back to straight-line
 
 import math
 import os
-import sqlite3
 
 import requests
 from dotenv import load_dotenv
 
 load_dotenv()
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "shelters.db")
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
@@ -208,17 +204,29 @@ def route_distances(origin, destinations, profile="foot-walking"):
 
 
 def _load_shelters():
-    """Load shelters that have cached coordinates."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
-        rows = conn.execute(
-            "SELECT district, okrug, address, lat, lon FROM addresses"
-            " WHERE lat IS NOT NULL AND lon IS NOT NULL"
-        ).fetchall()
-    finally:
-        conn.close()
-    return [dict(r) for r in rows]
+    """Load shelters that have cached coordinates (via the ORM).
+
+    Returns all shelters with coordinates regardless of ``confirmed``; the flag
+    is carried through so the bot can label results as confirmed or not.
+    """
+    from shelters.models import Shelter
+
+    rows = Shelter.objects.filter(
+        lat__isnull=False,
+        lon__isnull=False,
+    ).values("district_name", "okrug", "address", "comment", "confirmed", "lat", "lon")
+    return [
+        {
+            "district": r["district_name"],
+            "okrug": r["okrug"],
+            "address": r["address"],
+            "comment": r["comment"],
+            "confirmed": r["confirmed"],
+            "lat": r["lat"],
+            "lon": r["lon"],
+        }
+        for r in rows
+    ]
 
 
 def find_closest_shelter_by_coords(lat, lon, profile="foot-walking"):
@@ -242,6 +250,8 @@ def find_closest_shelter_by_coords(lat, lon, profile="foot-walking"):
         "district": best["district"],
         "okrug": best["okrug"],
         "address": best["address"],
+        "comment": best.get("comment", ""),
+        "confirmed": best.get("confirmed", False),
         "lat": best["lat"],
         "lon": best["lon"],
         "distance_m": distances[best_i],
@@ -265,9 +275,18 @@ def find_closest_shelter(user_address, profile="foot-walking"):
     return find_closest_shelter_by_coords(origin[0], origin[1], profile)
 
 
+def _setup_django():
+    """Bootstrap Django so ORM-backed helpers work when run standalone."""
+    import django
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+    django.setup()
+
+
 if __name__ == "__main__":
     import sys
 
+    _setup_django()
     query = " ".join(sys.argv[1:]) or "Москва, Тверская улица, 1"
     result = find_closest_shelter(query)
     if result is None:

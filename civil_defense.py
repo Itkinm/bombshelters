@@ -8,14 +8,15 @@ Rule: if the user's city is in the cities table, return that body; otherwise
 fall back to the body for the user's region.
 """
 
-import csv
-import os
 import re
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CITIES_CSV = os.path.join(BASE_DIR, "cities_civil_defense.csv")
-REGIONS_CSV = os.path.join(BASE_DIR, "regions_civil_defense.csv")
-DISTRICTS_CSV = os.path.join(BASE_DIR, "moscow_spb_districts_civil_defense.csv")
+# Fields pulled from the ORM for each civil-defense body (keys mirror the old
+# CSV column names so the matching/formatting helpers work unchanged).
+_BODY_FIELDS = (
+    "city", "region", "federal_district", "area", "district",
+    "body_name", "org_name", "body_type", "address", "phone", "email",
+    "website", "source_url", "notes", "custom_instructions",
+)
 
 # Cities that have district-level bodies in the districts table.
 DISTRICT_CITIES = {"москва", "санкт-петербург"}
@@ -49,22 +50,22 @@ def _norm_district(s):
     return {t for t in tokens if t and t not in _DISTRICT_DROP}
 
 
-def _load(path):
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+def _bodies(level):
+    """Fetch civil-defense bodies of a given level from the ORM as dicts.
 
+    Queried per lookup (not cached) so admin edits take effect without a
+    bot restart. Row keys match the old CSV columns.
+    """
+    from civildefense.models import CivilDefenseBody
 
-# Loaded once at import time (i.e. on bot startup), not per request.
-_CITIES = _load(CITIES_CSV)
-_REGIONS = _load(REGIONS_CSV)
-_DISTRICTS = _load(DISTRICTS_CSV)
+    return list(CivilDefenseBody.objects.filter(level=level).values(*_BODY_FIELDS))
 
 
 def find_city(city):
     if not city:
         return None
     target = _norm(city)
-    for row in _CITIES:
+    for row in _bodies("city"):
         if _norm(row.get("city")) == target:
             return row
     return None
@@ -74,13 +75,14 @@ def find_region(region):
     if not region:
         return None
     target = _norm(region)
+    rows = _bodies("region")
     # Exact (normalized) match first.
-    for row in _REGIONS:
+    for row in rows:
         if _norm(row.get("region")) == target:
             return row
     # Fall back to a containment match (handles e.g.
     # "Кемеровская область — Кузбасс" vs "Кемеровская область").
-    for row in _REGIONS:
+    for row in rows:
         rn = _norm(row.get("region"))
         if rn and (rn in target or target in rn):
             return row
@@ -119,7 +121,7 @@ def find_district_body(city, district_candidates):
     if city_n not in DISTRICT_CITIES:
         return None
 
-    rows = [r for r in _DISTRICTS if _norm(r.get("city")) == city_n]
+    rows = [r for r in _bodies("district") if _norm(r.get("city")) == city_n]
     if not rows:
         return None
 
@@ -147,6 +149,14 @@ def _format_contacts(lines, row):
             lines.append(f"{label}: {val}")
 
 
+def _append_instructions(lines, row):
+    """Append admin-authored custom instructions, if any, to a message block."""
+    instructions = (row.get("custom_instructions") or "").strip()
+    if instructions:
+        lines.append("")
+        lines.append(instructions)
+
+
 def format_body(result):
     """Format a city/region lookup result as a Russian-language message block."""
     if not result:
@@ -155,6 +165,7 @@ def format_body(result):
     scope = "город" if result["level"] == "city" else "регион"
     lines = [f"Ответственный орган ГО и ЧС ({scope}):", row.get("body_name", "").strip()]
     _format_contacts(lines, row)
+    _append_instructions(lines, row)
     return "\n".join(line for line in lines if line)
 
 
@@ -176,4 +187,5 @@ def format_district_body(row):
     if name:
         lines.append(name)
     _format_contacts(lines, row)
+    _append_instructions(lines, row)
     return "\n".join(line for line in lines if line)
