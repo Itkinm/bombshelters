@@ -141,6 +141,31 @@ def find_district_body(city, district_candidates):
     return None
 
 
+def format_body_text(city, region, district_candidates=None):
+    """Formatted civil-defense contact block for a location.
+
+    District-level body for Moscow/SPB, otherwise the region/city body.
+    Returns a string or None.
+    """
+    if is_district_city(city):
+        row = find_district_body(city, district_candidates)
+        return format_district_body(row) if row else None
+    result = lookup_civil_defense(city, region)
+    return format_body(result) if result else None
+
+
+def location_instructions(city, region, district_candidates=None):
+    """Admin-authored custom instructions for the responsible body, or None."""
+    if is_district_city(city):
+        row = find_district_body(city, district_candidates)
+    else:
+        result = lookup_civil_defense(city, region)
+        row = result["row"] if result else None
+    if not row:
+        return None
+    return (row.get("custom_instructions") or "").strip() or None
+
+
 def _format_contacts(lines, row):
     for label, key in (("Адрес", "address"), ("Телефон", "phone"),
                        ("Email", "email"), ("Сайт", "website")):
