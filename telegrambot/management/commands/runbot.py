@@ -4,6 +4,9 @@ Runs as a Django management command so the ORM is available inside handlers
 (`python manage.py runbot`). Uses the telebot / pyTelegramBotAPI library.
 """
 
+import logging
+import time
+
 import telebot
 from telebot import types
 from django.conf import settings
@@ -15,6 +18,8 @@ from shelter_finder import (
     reverse_geocode,
 )
 from civil_defense import format_body_text, location_instructions
+
+logger = logging.getLogger(__name__)
 
 # Only shelters reachable within this walking time are offered to the user.
 WALK_LIMIT_S = 15 * 60
@@ -186,4 +191,12 @@ class Command(BaseCommand):
 
         bot = build_bot(token)
         self.stdout.write(self.style.SUCCESS("Bot started. Polling..."))
-        bot.polling(none_stop=True, timeout=60)
+        while True:
+            try:
+                bot.infinity_polling(timeout=60, long_polling_timeout=60)
+            except (KeyboardInterrupt, SystemExit):
+                bot.stop_polling()
+                break
+            except Exception:
+                logger.exception("Bot polling crashed; restarting in 5s")
+                time.sleep(5)
